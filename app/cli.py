@@ -10,10 +10,14 @@ from typing import Any
 from app import __version__
 from app.config import VALID_SEVERITIES, Config, ConfigError
 from app.config import load as load_config
+from app.llm import DEFAULT_MODEL, GeminiClient, LLMError, advise
 from app.parser import parse
 from app.refactor import refactor_dockerfile
-from app.report import FORMATTERS, as_json
+from app.report import ADVISORY_FORMATTERS, FORMATTERS, as_json
 from app.rules import SEVERITY_ORDER, analyze, rule_catalog
+
+COMMANDS = ("analyze", "refactor", "suggest", "rules", "version")
+"""Single source of truth for the subcommand names; see test_cli."""
 
 EXIT_OK = 0
 EXIT_USAGE = 2
@@ -106,6 +110,33 @@ def cmd_refactor(args: argparse.Namespace, config: Config) -> int:
     return EXIT_OK
 
 
+def cmd_suggest(args: argparse.Namespace, config: Config) -> int:
+    """Advisory only. Never rewrites, never changes a deterministic finding."""
+    content = _read(args.path)
+    doc = parse(content)
+    skipped: list[str] = refactor_dockerfile(content)["skipped"]
+
+    try:
+        questions, suggestions = advise(
+            content, doc, skipped, client=GeminiClient(model=args.model or DEFAULT_MODEL)
+        )
+    except LLMError as error:
+        print(f"stow: {error}", file=sys.stderr)
+        return EXIT_USAGE
+
+    result = {
+        "status": "ADVISORY",
+        "target": args.path,
+        "model": args.model or DEFAULT_MODEL,
+        "open_questions": [q.to_dict() for q in questions],
+        "suggestions": [s.to_dict() for s in suggestions],
+        "applied": False,
+    }
+    output_format = args.format or "text"
+    print(ADVISORY_FORMATTERS[output_format](result), end="" if output_format == "text" else "\n")
+    return EXIT_OK
+
+
 def cmd_rules(args: argparse.Namespace, config: Config) -> int:
     catalog = rule_catalog()
     if args.format == "text":
@@ -150,6 +181,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--check", action="store_true", help="exit non-zero if a rewrite would change the file"
     )
     refactor_cmd.set_defaults(func=cmd_refactor)
+
+    suggest_cmd = subcommands.add_parser(
+        "suggest", help="ask a model about the judgement calls the engine refuses"
+    )
+    suggest_cmd.add_argument("path", nargs="?", default="Dockerfile")
+    suggest_cmd.add_argument("--format", choices=sorted(ADVISORY_FORMATTERS), default="text")
+    suggest_cmd.add_argument(
+        "--model", help=f"Gemini model to ask (default: {DEFAULT_MODEL})"
+    )
+    suggest_cmd.set_defaults(func=cmd_suggest)
 
     rules_cmd = subcommands.add_parser("rules", help="list the rule catalog")
     rules_cmd.add_argument("--format", choices=("json", "text"), default="json")

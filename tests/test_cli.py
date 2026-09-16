@@ -171,3 +171,76 @@ def test_non_utf8_file_reports_cleanly(tmp_path, capsys):
 def test_windows_illegal_path_characters_report_cleanly(capsys):
     assert main(["analyze", r"C:\Users\nobody\<placeholder>\Dockerfile"]) == EXIT_INPUT
     assert "Traceback" not in capsys.readouterr().err
+
+
+# --- the advisory layer must stay strictly opt-in -------------------------
+
+
+@pytest.fixture()
+def no_network(monkeypatch):
+    """Make any outbound HTTP call an immediate, loud failure."""
+    def forbidden(*args, **kwargs):
+        raise AssertionError("this code path must not touch the network")
+
+    monkeypatch.setattr("urllib.request.urlopen", forbidden)
+
+
+def test_analyze_never_makes_a_network_call(dockerfile, capsys, no_network):
+    """A CI gate must work offline, and must not leak a Dockerfile anywhere."""
+    assert main(["analyze", dockerfile(DIRTY)]) == EXIT_FINDINGS
+
+
+def test_refactor_never_makes_a_network_call(dockerfile, capsys, no_network):
+    assert main(["refactor", dockerfile(DIRTY)]) == EXIT_OK
+
+
+def test_rules_and_version_never_make_a_network_call(capsys, no_network):
+    assert main(["rules"]) == EXIT_OK
+    assert main(["version"]) == EXIT_OK
+
+
+def test_suggest_without_an_api_key_fails_cleanly(dockerfile, capsys, monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    assert main(["suggest", dockerfile(DIRTY)]) == EXIT_USAGE
+    err = capsys.readouterr().err
+    assert "GEMINI_API_KEY" in err
+    assert "Traceback" not in err
+
+
+def test_suggest_on_a_clean_file_needs_no_key_and_no_call(
+    dockerfile, capsys, monkeypatch, no_network
+):
+    """Nothing to ask means nothing to pay for."""
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    assert main(["suggest", dockerfile(CLEAN)]) == EXIT_OK
+    assert "No model call made" in capsys.readouterr().out
+
+
+def test_legacy_shim_knows_every_subcommand():
+    """Two hardcoded lists of subcommands is one too many."""
+    import argparse
+
+    from app.cli import COMMANDS, build_parser
+
+    parser = build_parser()
+    declared = frozenset(
+        name
+        for action in parser._actions
+        if isinstance(action, argparse._SubParsersAction)
+        for name in action.choices
+    )
+    assert declared == frozenset(COMMANDS)
+
+
+def test_legacy_shim_does_not_swallow_the_suggest_command(
+    dockerfile, capsys, monkeypatch, no_network
+):
+    from app.main import main as legacy_main
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    assert legacy_main(["suggest", dockerfile(CLEAN)]) == EXIT_OK
+    # routed to suggest, not rewritten into `analyze suggest ...`
+    assert "No model call made" in capsys.readouterr().out
