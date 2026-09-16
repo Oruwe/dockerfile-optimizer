@@ -123,4 +123,46 @@ def _security_severity(severity: str) -> str:
     return {"critical": "9.0", "high": "7.0", "medium": "4.0", "low": "2.0"}[severity]
 
 
+CONFIDENCE_MARKER = {"high": "●", "medium": "◐", "low": "○"}
+
+
+def as_advisory_text(result: dict[str, Any]) -> str:
+    """Render suggestions, kept visually separate from deterministic findings.
+
+    A reader must never have to work out which half of the output a line came
+    from: one half is reproducible, the other is a model's opinion.
+    """
+    target = result.get("target", "Dockerfile")
+    questions: list[dict[str, Any]] = result.get("open_questions", [])
+    suggestions: list[dict[str, Any]] = result.get("suggestions", [])
+
+    if not questions:
+        return f"{target}: nothing the engine could not decide. No model call made.\n"
+
+    lines = [
+        f"{target}: {len(questions)} open question(s) the engine declines to answer",
+        f"model: {result.get('model', 'unknown')} — suggestions below are advisory, "
+        "not reproducible",
+        "",
+    ]
+    for question in questions:
+        lines.append(f"  ? {question['kind']}  {question['subject']}  (line {question['line']})")
+        lines.append(f"      {question['detail']}")
+        answered = [s for s in suggestions if s["kind"] == question["kind"]]
+        for suggestion in answered:
+            marker = CONFIDENCE_MARKER.get(str(suggestion["confidence"]), "○")
+            lines.append(
+                f"      {marker} model ({suggestion['confidence']}): {suggestion['proposal']}"
+            )
+            if suggestion.get("rationale"):
+                lines.append(f"        because: {suggestion['rationale']}")
+        if not answered:
+            lines.append("      (model returned no usable answer)")
+        lines.append("")
+
+    lines.append("Nothing above has been applied. Verify before acting on it.")
+    return "\n".join(lines) + "\n"
+
+
 FORMATTERS = {"json": as_json, "text": as_text, "sarif": as_sarif}
+ADVISORY_FORMATTERS = {"json": as_json, "text": as_advisory_text}

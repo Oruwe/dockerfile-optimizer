@@ -9,10 +9,13 @@ commands:
     description: Audit a Dockerfile and report findings as JSON, text or SARIF.
   - name: refactor
     description: Rewrite a Dockerfile, applying only mechanically safe transforms.
+  - name: suggest
+    description: Ask a language model the judgement calls the engine refuses to make.
   - name: rules
     description: List the rule catalog with severities.
 
 capabilities:
-  network_access: false
+  network_access: opt-in      # only `suggest`, which calls the Gemini API
   filesystem_writes: opt-in   # only via `refactor --write` on the named path
   executes_shell: false
+  model_assisted: advisory    # suggestions are labelled and never auto-applied

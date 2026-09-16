@@ -6,6 +6,15 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [1.0.0]
 
 ### Added
+- `stow suggest`: an opt-in advisory layer that asks Gemini the judgement calls
+  the deterministic engine refuses -- which tag replaces `:latest`, whether a
+  build it will not split could be split by hand. The layer is strictly
+  additive: a model answer that does not respond to a question the engine asked
+  is discarded, so it can never invent a finding; it never writes; and with no
+  open questions it makes no API call at all. Requests run at temperature 0 and
+  use the standard library for transport, so the layer adds no dependency.
+- Tests that fail if `analyze`, `refactor`, `rules` or `version` opens a socket.
+  A CI gate has to work offline, and must not ship a Dockerfile anywhere.
 - `LOCKFILE_FALLBACK` rule: `uv sync --frozen || uv sync` abandons the pin it
   just asked for, so a stale lockfile silently yields a different dependency set.
 - `uv`, `pdm`, `pnpm`, `composer` and `cargo` recognised as dependency

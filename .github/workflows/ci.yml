@@ -42,6 +42,8 @@ jobs:
         run: stow analyze Dockerfile
       - name: Refactor must be a no-op on an already-optimal file
         run: stow refactor examples/Dockerfile.good --check
+      - name: Advisory layer stays offline without a key
+        run: stow suggest examples/Dockerfile.good
       - name: Known-bad example must be caught
         run: |
           if stow analyze examples/Dockerfile.bad; then
